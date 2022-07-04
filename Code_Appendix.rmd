@@ -1,0 +1,349 @@
+---
+title: "Modeling MBA MVP Shares using Bayesian Beta Regression: Code Appendix"
+author: "Rebecca Lopez, Harshil Desai, Andrea Boskovic"
+date: '2022-06-10'
+output: pdf_document
+---
+
+```{r,include=F}
+# Import necessary libraries
+library(rvest)
+library(tidyverse)
+library(rjags)
+library(rethinking)
+set.seed(564)
+```
+
+# Clean and Prepare Our Data
+
+```{r}
+# Final dataframe
+bbref <- data.frame()
+
+# Loop through every year from 1980 to 2021
+for (year in 1980:2021) {
+  # Read in the page
+  tab <- read_html(sprintf("https://www.basketball-reference.com/awards/awards_%s.html#mvp", year)) %>% 
+    html_node("#div_mvp") %>% 
+    html_table()
+  
+  # Rename columns
+  colnames(tab) <- tab %>% 
+    head(1)
+  
+  # Get rid of header row
+  tab <- tab %>% 
+    tail(-1)
+  
+  # Specify season
+  tab$season <- year
+
+  # Combine rows
+  bbref <- rbind(bbref, tab)
+}
+
+#write.csv(bbref, "mvpdata.csv")
+
+mvpdf <- bbref
+```
+
+```{r}
+# Fixing variable types
+
+mvpdf <- mvpdf %>%
+  mutate(Player = as.factor(Player),
+         Age = as.numeric(Age),
+         Tm = as.factor(Tm),
+         First = as.numeric(First),
+         `Pts Won` = as.numeric(`Pts Won`),
+         `Pts Max` = as.numeric(`Pts Max`),
+         Share = as.numeric(Share),
+         PTS = as.numeric(PTS),
+         G = as.numeric(G),
+         MP = as.numeric(MP),
+         TRB = as.numeric(TRB),
+         AST = as.numeric(AST),
+         STL = as.numeric(STL),
+         BLK = as.numeric(BLK),
+         `FG%` = as.numeric(`FG%`),
+         `3P%` = as.numeric(`3P%`),
+         `FT%` = as.numeric(`FT%`),
+         season = as.factor(season))
+```
+
+```{r}
+# Standardize the data
+full_df <- data.frame(
+  share = mvpdf$Share,
+  age = standardize(mvpdf$Age),
+  pts = standardize(mvpdf$PTS),
+  games_played = standardize(mvpdf$G),
+  mins_played = standardize(mvpdf$MP),
+  tot_rb = standardize(mvpdf$TRB),
+  ast = standardize(mvpdf$AST),
+  stl = standardize(mvpdf$STL),
+  blk = standardize(mvpdf$BLK),
+  fg_pct = standardize(mvpdf$`FG%`),
+  threept_pct = standardize(mvpdf$`3P%`),
+  ft_pct = standardize(mvpdf$`FT%`)) %>%
+  drop_na()
+
+# Build desired output
+y <- full_df[,1] 
+# Adjusting for steph
+y[which.max(y)] <- y[which.max(y)] - 0.00001 
+
+# Build input without player id
+x <- full_df[,2:ncol(full_df)]
+x <- cbind(1, x)
+```
+
+# Prior Predictive Check
+
+We can overlay the prior generated densities over the true density. 
+
+```{r}
+#Overlay the prior generated densities over the true density
+dens(y, adj = 1, col = col.alpha("red", alpha = 1), ylim=c(0,5))
+for(i in 1:200){
+  n <- nrow(x)
+  pmax <-  100
+  beta_0 <- rnorm(1,mean(y),1)
+  beta <- rnorm(ncol(x)-1,0,1)
+  beta <- c(beta_0,beta)
+  xb <-  as.matrix(x)%*%beta
+  mu <- exp(xb)/(1+exp(xb))
+  phi <- runif(1,0,pmax)
+  a <- mu*phi
+  b <- (1-mu)*phi
+  y_sim <- rbeta(n,a,b)
+  dens(y_sim, adj = 1, add = T, col = col.alpha("lightblue", alpha = .5))
+}
+legend("topright", legend = c("Simulated Share",'True Share'),
+       lty = c(1), col = c("lightblue",'red'))
+mtext("Completely Uninformative Prior")
+
+```
+
+# Construct our Model
+
+```{r}
+model_code <- "
+  data{
+    D <- dim(x)
+    n <- D[1]
+    p <- D[2]
+  }
+  
+  model{
+  
+    for(i in 1:n) {
+    
+      # likelihood
+      y[i] ~ dbeta(a[i],b[i])
+      
+      #posterior predictive
+      ynew[i] ~ dbeta(a[i],b[i])
+  
+      logit(mu[i]) <- x_beta[i]
+      
+      a[i] <- mu[i]*phi
+      b[i] <- (1 - mu[i])*phi
+      
+      mean_player[i] <- a[i]/(a[i] + b[i])
+      
+    }
+    
+    x_beta <- x%*%beta
+    beta[1] ~ dnorm(my, 1)
+    
+    for(i in 2:p) {
+    
+      beta[i] ~ dnorm(0, 1)
+      
+    }
+    
+    phi ~ dunif(0, pmax)
+    
+  }
+"
+# Run Model
+model <- jags.model(file = textConnection(model_code), data = 
+                      list(y = y,
+                           x = x,
+                           my = mean(y),
+                           pmax = 100),
+                    n.chains = 4,
+                    n.adapt = 1000
+                    )
+
+```
+
+# Posterior Predictive Check
+
+```{r}
+
+ynew <- coda.samples(model, 
+                      variable.names = c('ynew'), 
+                      n.iter = 3000)
+ynew.df <- as.data.frame(ynew[[1]])
+```
+
+```{r}
+n <- ncol(ynew.df)
+nsim <- nrow(ynew.df)
+
+dens(y, adj = 1, col = col.alpha("red", alpha = 1), ylim=c(0,7))
+for(i in 1:200){
+  dens(t(ynew.df[i,]), adj = 1, add = T, col = col.alpha("lightblue", alpha = .2))
+}
+legend("topright", legend = c("Simulated Share",'True Share'),
+       lty = c(1), col = c("lightblue",'red'))
+mtext("Posterior Predictive Check")
+```
+
+# Model Diagnostics
+
+```{r}
+test_samps <- coda.samples(model, 
+                      variable.names = c('beta','phi'), 
+                      n.iter = 3000)
+test_samps.df <- as.data.frame(test_samps[[1]])
+```
+```{r}
+test_samps.df_test <- (test_samps.df %>% precis(depth=2,prob=.95))[1:12,]
+test_samps.df_test$var = c("intercept",names(full_df)[2:ncol(full_df)])
+test_samps.df_test[,c(6,1:5)]
+```
+
+
+
+```{r}
+# Mean Square Error
+meean_player_samps <- coda.samples(model, 
+                      variable.names = c('mean_player'), 
+                      n.iter = 3000)
+mp.df <- as.data.frame(meean_player_samps[[1]])
+player_pred <- colMeans(mp.df)
+comparison <- cbind(player_pred, y,
+                 (y - player_pred)^2)
+MSE = mean((y - player_pred)^2)
+MSE
+```
+
+```{r}
+#Posterior Predictive Check
+ynew.PI <- apply(ynew.df, 2, PI, prob = .95)
+
+mu.CI <- mp.df %>% precis(depth = 2, prob = .95)
+
+ggplot(data = full_df, aes(x = pts, y = share)) +
+  geom_point() +
+  geom_line(aes(x = pts, y = colMeans(mp.df))) +
+  geom_ribbon(aes(ymin = mu.CI[, 3], ymax = mu.CI[, 4], x = pts),
+              alpha = .2, fill = "blue") +
+  geom_ribbon(aes(ymin = ynew.PI[1, ], ymax = ynew.PI[2, ], x = pts),
+              alpha = .3, fill = "pink") +
+  labs(
+    title = "MVP Vote Share vs. Points Scored",
+    subtitle = "Posterior Predictive Check",
+    x = "Points Scored",
+    y = "MVP Vote Share"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+#find effective sample size
+effectiveSize(test_samps)
+#plot traceplots
+plot(test_samps)
+#r_Hat
+gelman.diag(test_samps)
+```
+
+
+# Using 2022 Data as Validation Set
+
+```{r}
+#load in beta and phi
+beta_samps <- t(as.matrix(test_samps.df[,1:12]))
+phi_samps <- as.matrix(test_samps.df[,13])
+```
+
+```{r}
+#subset original data frame for standardization
+mvpdf_dup <- mvpdf %>%
+  mutate(Age = as.numeric(Age),
+         PTS = as.numeric(PTS),
+         G = as.numeric(G),
+         MP = as.numeric(MP),
+         TRB = as.numeric(TRB),
+         AST = as.numeric(AST),
+         STL = as.numeric(STL),
+         BLK = as.numeric(BLK),
+         `FG%` = as.numeric(`FG%`),
+         `3P%` = as.numeric(`3P%`),
+         `FT%` = as.numeric(`FT%`),
+         )%>%
+  drop_na()
+#reorder variables in terms of model
+mvpdf_dup <- mvpdf_dup[,c(3,11,9,10,12:18)]
+#load in 2022 data
+X2022_dat <- read_csv("2022_dat.txt")
+#reorder the 2022 data
+x_test <- X2022_dat[,c(3,11,9,10,12:18)]
+#standardize 2022 in terms of 1980-2021 mean and sd
+for (i in 1:ncol(x_test)){
+  x_test[,i] = (x_test[,i] - mean(t(mvpdf_dup[,i])))/sd(t((mvpdf_dup[,i])))
+}
+#create 2022 x matrix
+x_test <- cbind(1,x_test)
+x_test <- as.matrix(x_test)
+```
+
+```{r}
+#apply beta regression model to 2022 data
+#find x@beta
+xb_test <- x_test%*%beta_samps
+xb_test <- t(xb_test)
+#find inv logit
+mu_test <- exp(xb_test)/(1+exp(xb_test))
+a_test = matrix(0,3000,12)
+b_test = matrix(0,3000,12)
+#find a and b samples
+for(i in 1:3000){
+  a_test[i,] <- mu_test[i,]*phi_samps[i]
+  b_test[i,] <- (1-mu_test[i,])*phi_samps[i]
+}
+#calculate mean player predictions
+preds_2022 <- a_test/(a_test+b_test)
+preds_2022_means <- colMeans(preds_2022)
+pi_95 <- function(x){
+  quantile(x,probs=c(.025,.975))
+}
+preds_2022_quants <- apply(preds_2022,2, pi_95)
+```
+
+```{r}
+#creating a dataframe to store predictions
+preds_df <- cbind("true vote share" = X2022_dat$Share,
+      "predicted_vote_share" = preds_2022_means, 
+      "Lower_95_PI" = preds_2022_quants[1,],
+      "Upper_95_PI" = preds_2022_quants[2,] )
+preds_df <- data.frame(preds_df)
+preds_df <- preds_df %>% 
+  mutate(Player = X2022_dat$Player, 
+         true_MVP_rank = c(1:12),
+         predicted_vote_share = round(predicted_vote_share,digits=4)) %>% 
+  select(Player, true_MVP_rank, 
+         true.vote.share,predicted_vote_share, Lower_95_PI,Upper_95_PI) %>% 
+  arrange(desc(predicted_vote_share)) %>% 
+  mutate(pred_MVP_rank = c(1:12)) %>% 
+  select(Player, true_MVP_rank, pred_MVP_rank, 
+         true.vote.share,predicted_vote_share,Lower_95_PI,Upper_95_PI)
+#write.csv(preds_df, "2022_preds.csv")
+preds_df
+```
+
