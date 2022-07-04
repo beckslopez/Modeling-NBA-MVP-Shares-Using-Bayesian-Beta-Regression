@@ -8,5 +8,5 @@ question: How can we predict who will receive this award? In this paper we propo
 to modeling, creating a Bayesian beta regression model to predict the MVP vote share a given NBA
 player will receive at the end of the season.
 
-To read more on the analysis of the results and our methodology, please refer to the FinalReport.pdf
+To read more on the analysis of the results and our methodology, please refer to the FinalReport.pdf.
 Our model and figures can be replicated using the R notebook, Code_Appendix.Rmd, with the data provided for 2022 in 2022_dat.txt.
