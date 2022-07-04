@@ -1,4 +1,4 @@
-# Modeling-NBA-MVP-Shares-Using-Bayesian-Beta-Regression
+# Modeling NBA MVP Shares Using Bayesian Beta Regression
 
 The National Basketball Association, or NBA, gives out a litany of awards every season. From awarding
 outstanding defense, to acknowledging tremendous improvement in a player, no award is more prestigious
@@ -10,3 +10,5 @@ player will receive at the end of the season.
 
 To read more on the analysis of the results and our methodology, please refer to the FinalReport.pdf.
 Our model and figures can be replicated using the R notebook, Code_Appendix.Rmd, with the data provided for 2022 in 2022_dat.txt.
+
+This project was done as a final project by my team, Andrea Boskovic, Harshil Desai, and I (Rebecca Lopez) for our graduate statistics course at the University of Washington.
